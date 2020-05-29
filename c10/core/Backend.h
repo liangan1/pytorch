@@ -25,18 +25,22 @@ namespace c10 {
  * or "SparseCUDA"; backend in torch.backends is something like "MKL" or
  * "CUDNN".
  */
-enum class Backend { CPU, CUDA, HIP, SparseCPU, SparseCUDA, SparseHIP, MSNPU, XLA, QuantizedCPU, Undefined, MkldnnCPU, NumOptions };
+enum class Backend { CPU, CUDA, HIP, SparseCPU, SparseCUDA, SparseHIP, MSNPU, XLA, QuantizedCPU, Undefined, MkldnnCPU, DPCPP, SparseDPCPP, NumOptions };
 
 static inline Backend toSparse(Backend b) {
   switch (b) {
     case Backend::CPU:
       return Backend::SparseCPU;
+    case Backend::DPCPP:
+      return Backend::SparseDPCPP;
     case Backend::CUDA:
       return Backend::SparseCUDA;
     case Backend::HIP:
       return Backend::SparseHIP;
     case Backend::SparseCPU:
       return Backend::SparseCPU;
+    case Backend::SparseDPCPP:
+      return Backend::SparseDPCPP;
     case Backend::SparseCUDA:
       return Backend::SparseCUDA;
     case Backend::SparseHIP:
@@ -58,6 +62,10 @@ static inline Backend toDense(Backend b) {
       return Backend::MSNPU;
     case Backend::XLA:
       return Backend::XLA;
+    case Backend::DPCPP:
+      return Backend::DPCPP;
+    case Backend::SparseDPCPP:
+      return Backend::DPCPP;
     case Backend::SparseCPU:
       return Backend::CPU;
     case Backend::SparseCUDA:
@@ -82,6 +90,10 @@ static inline Backend dispatchKeyToBackend(DispatchKey t) {
     return Backend::MSNPU;
   } else if (t == DispatchKey::XLATensorId || t == DispatchKey::XLAPreAutograd) {
     return Backend::XLA;
+  } else if (t == DispatchKey::DPCPPTensorId) {
+    return Backend::DPCPP;
+  } else if (t == DispatchKey::SparseDPCPPTensorId) {
+    return Backend::SparseDPCPP;
   } else if (t == DispatchKey::SparseCPUTensorId) {
     return Backend::SparseCPU;
   } else if (t == DispatchKey::SparseCUDATensorId) {
@@ -111,6 +123,10 @@ static inline DispatchKey backendToDispatchKey(Backend b) {
       return DispatchKey::MSNPUTensorId;
     case Backend::XLA:
       return DispatchKey::XLATensorId;
+    case Backend::DPCPP:
+      return DispatchKey::DPCPPTensorId;
+    case Backend::SparseDPCPP:
+      return DispatchKey::SparseDPCPPTensorId;
     case Backend::SparseCPU:
       return DispatchKey::SparseCPUTensorId;
     case Backend::SparseCUDA:
@@ -146,6 +162,9 @@ static inline DeviceType backendToDeviceType(Backend b) {
       return DeviceType::CUDA;
     case Backend::SparseHIP:
       return DeviceType::HIP;
+    case Backend::DPCPP:
+    case Backend::SparseDPCPP:
+      return DeviceType::DPCPP;
     case Backend::MkldnnCPU:
     case Backend::QuantizedCPU:
       return DeviceType::CPU;
@@ -158,12 +177,14 @@ static inline DeviceType backendToDeviceType(Backend b) {
 
 static inline Backend backendToCPU(Backend b) {
   switch (b) {
+    case Backend::DPCPP:
     case Backend::CPU:
       return Backend::CPU;
     case Backend::CUDA:
       return Backend::CPU;
     case Backend::HIP:
       return Backend::CPU;
+    case Backend::SparseDPCPP:
     case Backend::SparseCPU:
       return Backend::SparseCPU;
     case Backend::SparseCUDA:
@@ -186,12 +207,14 @@ static inline Backend backendToCPU(Backend b) {
 
 static inline Backend backendToCUDA(Backend b) {
   switch (b) {
+    case Backend::DPCPP:
     case Backend::CPU:
     case Backend::CUDA:
     case Backend::HIP:
     case Backend::MSNPU:
     case Backend::XLA:
       return Backend::CUDA;
+    case Backend::SparseDPCPP:
     case Backend::SparseCPU:
     case Backend::SparseCUDA:
     case Backend::SparseHIP:
@@ -205,12 +228,14 @@ static inline Backend backendToCUDA(Backend b) {
 
 static inline Backend backendToHIP(Backend b) {
   switch (b) {
+    case Backend::DPCPP:
     case Backend::CPU:
     case Backend::CUDA:
     case Backend::HIP:
     case Backend::MSNPU:
     case Backend::XLA:
       return Backend::HIP;
+    case Backend::SparseDPCPP:
     case Backend::SparseCPU:
     case Backend::SparseCUDA:
     case Backend::SparseHIP:
@@ -225,6 +250,8 @@ static inline Backend backendToHIP(Backend b) {
 // TODO: This probably shouldn't actually be static inline
 static inline const char* toString(Backend b) {
   switch (b) {
+    case Backend::DPCPP:
+      return "DPCPP";
     case Backend::CPU:
       return "CPU";
     case Backend::CUDA:
@@ -235,6 +262,8 @@ static inline const char* toString(Backend b) {
       return "MSNPU";
     case Backend::XLA:
       return "XLA";
+    case Backend::SparseDPCPP:
+      return "SparseDPCPP";
     case Backend::SparseCPU:
       return "SparseCPU";
     case Backend::SparseCUDA:
@@ -252,6 +281,7 @@ static inline const char* toString(Backend b) {
 
 static inline bool isSparse(Backend b) {
   switch (b) {
+    case Backend::SparseDPCPP:
     case Backend::SparseCPU:
     case Backend::SparseCUDA:
     case Backend::SparseHIP:

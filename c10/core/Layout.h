@@ -15,6 +15,7 @@ constexpr auto kMkldnn = Layout::Mkldnn;
 inline Layout layout_from_backend(Backend backend) {
   switch (backend) {
     case Backend::SparseCPU:
+    case Backend::SparseDPCPP:
     case Backend::SparseCUDA:
     case Backend::SparseHIP:
       return Layout::Sparse;

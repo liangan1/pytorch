@@ -90,6 +90,9 @@ enum class DispatchKey : uint8_t {
   SparseCUDATensorId, // registered at build/aten/src/ATen/SparseCUDAType.cpp
   SparseHIPTensorId,  // TODO: I think this is not actually used, due to Note [Masquerading as CUDA]
 
+  DPCPPTensorId, // DPCPP only
+  SparseDPCPPTensorId, // DPCPP only
+
   // Here are reserved backends for user-defined backends, see Note [Private use TensorId]
   // To see some example about how to use this, check out MSNPU
   PrivateUse1_TensorId,

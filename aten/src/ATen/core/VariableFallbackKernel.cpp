@@ -32,9 +32,9 @@ void variable_fallback_kernel(const OperatorHandle& op, Stack* stack) {
     Dispatcher::singleton().callBoxed(op, stack);
 }
 
-static auto registry = Dispatcher::singleton().registerBackendFallbackKernel(
-    DispatchKey::VariableTensorId,
-    KernelFunction::makeFromBoxedFunction<&variable_fallback_kernel>()
-);
+// static auto registry = Dispatcher::singleton().registerBackendFallbackKernel(
+//     DispatchKey::VariableTensorId,
+//     KernelFunction::makeFromBoxedFunction<&variable_fallback_kernel>()
+// );
 
 }

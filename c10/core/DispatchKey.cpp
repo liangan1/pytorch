@@ -36,6 +36,10 @@ const char* toString(DispatchKey t) {
       return "QuantizedCPUTensorId";
     case DispatchKey::VariableTensorId:
       return "VariableTensorId";
+    case DispatchKey::DPCPPTensorId:
+      return "DPCPPTensorId";
+    case DispatchKey::SparseDPCPPTensorId:
+      return "SparseDPCPPTensorId";
     case DispatchKey::BackendSelect:
       return "BackendSelect";
     case DispatchKey::TESTING_ONLY_GenericModeTensorId:

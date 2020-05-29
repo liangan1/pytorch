@@ -23,6 +23,7 @@ void initializeLayouts() {
   registerLayoutObject((THPLayout*)strided_layout, at::Backend::CUDA);
   registerLayoutObject((THPLayout*)strided_layout, at::Backend::MSNPU);
   registerLayoutObject((THPLayout*)strided_layout, at::Backend::XLA);
+  registerLayoutObject((THPLayout*)strided_layout, at::Backend::DPCPP);
   registerLayoutObject((THPLayout*)strided_layout, at::Backend::QuantizedCPU);
 
   PyObject *sparse_coo_layout = THPLayout_New(at::Layout::Sparse, "torch.sparse_coo");

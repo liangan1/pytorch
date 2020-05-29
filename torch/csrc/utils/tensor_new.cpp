@@ -59,6 +59,8 @@ Backend backendToBackendOfDeviceType(Backend b, DeviceType d) {
     case DeviceType::XLA:
       TORCH_CHECK(!isSparse(b), "Sparse not implemented for XLA");
       return Backend::XLA;
+    case DeviceType::DPCPP:
+      return Backend::DPCPP;
     default:
       AT_ERROR("Unknown device type");
   }
@@ -333,6 +335,7 @@ Tensor legacy_new_from_sequence(
 void check_base_legacy_new(c10::DispatchKey dispatch_key, at::Layout expected_layout) {
   if (expected_layout == c10::kStrided) {
     TORCH_CHECK(dispatch_key == c10::DispatchKey::CPUTensorId
+                || dispatch_key == c10::DispatchKey::DPCPPTensorId
                 || dispatch_key == c10::DispatchKey::CUDATensorId
                 || dispatch_key == c10::DispatchKey::HIPTensorId
                 || dispatch_key == c10::XLATensorId(),
@@ -344,6 +347,7 @@ void check_base_legacy_new(c10::DispatchKey dispatch_key, at::Layout expected_la
   } else if(expected_layout == c10::kSparse) {
     // NOTE: no sparse XLA
     TORCH_CHECK(dispatch_key == c10::DispatchKey::SparseCPUTensorId
+                || dispatch_key == c10::DispatchKey::SparseDPCPPTensorId
                 || dispatch_key == c10::DispatchKey::SparseCUDATensorId
                 || dispatch_key == c10::DispatchKey::SparseHIPTensorId,
                 "new(): expected DispatchKey: ", c10::DispatchKey::SparseCPUTensorId,

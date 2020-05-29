@@ -425,12 +425,18 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
     // NB: This method is not virtual and avoid dispatches for performance reasons.
     return key_set_.has(DispatchKey::SparseCPUTensorId) ||
            key_set_.has(DispatchKey::SparseCUDATensorId) ||
-           key_set_.has(DispatchKey::SparseHIPTensorId);
+           key_set_.has(DispatchKey::SparseHIPTensorId) ||
+           key_set_.has(DispatchKey::SparseDPCPPTensorId);
   }
 
   bool is_quantized() const {
     // NB: This method is not virtual and avoid dispatches for performance reasons.
     return key_set_.has(DispatchKey::QuantizedCPUTensorId);
+  }
+
+  bool is_dpcpp() const {
+    return key_set_.has(DispatchKey::DPCPPTensorId) ||
+           key_set_.has(DispatchKey::SparseDPCPPTensorId);
   }
 
   bool is_cuda() const {
@@ -866,12 +872,14 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
     auto is_dense = [](DispatchKeySet ts) {
       return ts.has(DispatchKey::CPUTensorId) ||
              ts.has(DispatchKey::CUDATensorId) ||
-             ts.has(DispatchKey::HIPTensorId);
+             ts.has(DispatchKey::HIPTensorId) ||
+             ts.has(DispatchKey::DPCPPTensorId);
     };
     auto is_sparse = [](DispatchKeySet ts) {
       return ts.has(DispatchKey::SparseCPUTensorId) ||
              ts.has(DispatchKey::SparseCUDATensorId) ||
-             ts.has(DispatchKey::SparseHIPTensorId);
+             ts.has(DispatchKey::SparseHIPTensorId) ||
+             ts.has(DispatchKey::SparseDPCPPTensorId);
     };
     return (key_set_ == from) || (is_dense(key_set_) && is_dense(from)) || (is_sparse(key_set_) && is_sparse(from));
   }

@@ -398,6 +398,8 @@ struct C10_API TensorOptions {
             return DispatchKey::MSNPUTensorId;
           case DeviceType::XLA:
             return DispatchKey::XLATensorId;
+          case DeviceType::DPCPP:
+            return DispatchKey::DPCPPTensorId;
           default:
             AT_ERROR("Unsupported device type for dense layout: ", device().type());
         }
@@ -409,6 +411,8 @@ struct C10_API TensorOptions {
             return DispatchKey::SparseCUDATensorId;
           case DeviceType::HIP:
             return DispatchKey::SparseHIPTensorId;
+          case DeviceType::DPCPP:
+            return DispatchKey::SparseDPCPPTensorId;
           default:
             AT_ERROR("Unsupported device type for sparse layout: ", device().type());
         }
@@ -634,6 +638,10 @@ inline DeviceType computeDeviceType(DispatchKey tid) {
     return DeviceType::MSNPU;
   } else if (tid == DispatchKey::XLATensorId) {
     return DeviceType::XLA;
+  } else if (tid == DispatchKey::DPCPPTensorId) {
+    return DeviceType::DPCPP;
+  } else if (tid == DispatchKey::SparseDPCPPTensorId) {
+    return DeviceType::DPCPP;
   } else if (tid == DispatchKey::SparseCPUTensorId) {
     return DeviceType::CPU;
   } else if (tid == DispatchKey::SparseCUDATensorId) {
