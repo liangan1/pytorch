@@ -474,7 +474,7 @@ def _new_process_group_helper(world_size,
             return GroupMember.NON_GROUP_MEMBER
         _pg_map[pg] = (Backend.MPI, None)
         _pg_names[pg] = group_name
-    else:
+    elif (backend == Backend.GLOO or backend == Backend.NCCL):
         # If this is a subgroup (which means group_ranks is specified),
         # we check if the current process is a member of the new group.
         if not is_default_group:
@@ -505,14 +505,26 @@ def _new_process_group_helper(world_size,
                 timeout)
             _pg_map[pg] = (Backend.NCCL, store)
             _pg_names[pg] = group_name
-        else:
-            pg = getattr(Backend, backend.upper())(
-                prefix_store,
-                rank,
-                world_size,
-                timeout)
-            _pg_map[pg] = (backend, store)
-            _pg_names[pg] = group_name
+    else:
+        # If this is a subgroup (which means group_ranks is specified),
+        # we check if the current process is a member of the new group.
+        if not is_default_group:
+            rank = _default_pg.rank()
+
+        # Use the group name as prefix in the default store, such that
+        # a single store can be reused by multiple groups.
+        prefix_store = PrefixStore(group_name, store)
+
+        pg = getattr(Backend, backend.upper())(
+            prefix_store,
+            rank,
+            world_size,
+            group_ranks,
+            timeout)
+        if not pg:
+            return GroupMember.NON_GROUP_MEMBER
+        _pg_map[pg] = (backend, store)
+        _pg_names[pg] = group_name
 
     return pg
 
