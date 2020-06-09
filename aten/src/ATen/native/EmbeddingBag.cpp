@@ -2,6 +2,7 @@
 #include <ATen/NativeFunctions.h>
 #include <ATen/Parallel.h>
 #include <ATen/TensorUtils.h>
+#include <ATen/native/EmbeddingBag.h>
 
 #include <TH/THBlasUtils.h>
 
@@ -24,20 +25,13 @@ namespace {
 namespace at {
 namespace native {
 
-static void make_offset2bag(const Tensor &offsets, const Tensor &indices, Tensor& offset2bag) {
-  offset2bag.index_add_(
-      0, offsets, at::ones_like(offsets, LEGACY_CONTIGUOUS_MEMORY_FORMAT)); // offset2bag = [1 0 1 0 1]
-  offset2bag[0] -= 1;                     // offset2bag = [0 0 1 0 1]
-  offset2bag = offset2bag.cumsum(0);     // offset2bag = [0 0 1 1 2]
-}
-
 namespace {
 
-bool isFastPathIndexSelect(const Tensor& src, Tensor& output) {
+static inline bool isFastPathIndexSelect(const Tensor& src, Tensor& output) {
   return src.scalar_type() == kFloat && src.stride(1) == 1 && output.stride(1) == 1;
 }
 
-bool isFastPathIndexSelectScale(const Tensor& src, const Tensor& scale, Tensor& output) {
+static inline bool isFastPathIndexSelectScale(const Tensor& src, const Tensor& scale, Tensor& output) {
   return src.scalar_type() == kFloat && src.stride(1) == 1 && output.stride(1) == 1 && scale.stride(0) == 1;
 }
 
@@ -87,21 +81,19 @@ void index_select_add<float>(const Tensor &select_indices,
     auto* offsets_data = offsets.data_ptr<int64_t>();
     std::vector<int64_t> offsets_include_last;
 
-    if (include_last_offset) {
-      output_size = offsets.numel() - 1;
-    } else {
+    if (!include_last_offset) {
       output_size = offsets.numel();
-      offsets_include_last.resize(offsets.numel() + 1);
+      offsets_include_last.resize(output_size + 1);
       std::memcpy(
           offsets_include_last.data(),
-          offsets.data_ptr<int64_t>(),
-          sizeof(int64_t) * offsets.numel());
-      offsets_include_last[offsets.numel()] = select_indices.numel();
+          offsets_data,
+          sizeof(int64_t) * output_size);
+      offsets_include_last[output_size] = select_indices.numel();
       offsets_data = offsets_include_last.data();
     }
 
     at::parallel_for(
-        0, output_size, 1, [&](int64_t start_idx, int64_t end_idx) {
+        0, output_size, 64, [&](int64_t start_idx, int64_t end_idx) {
           caffe2::EmbeddingLookupIdx(
               /*block_size=*/ddim,
               /*output_size=*/end_idx - start_idx,
@@ -459,9 +451,132 @@ _embedding_bag_cpu(const Tensor &weight, const Tensor &indices,
   }
 }
 
+Tensor _embedding_bag_sparse_backward_cpu_sum_fast(
+    const Tensor &grad, const Tensor &indices, const Tensor &offsets, int64_t num_weights, int64_t mode, const Tensor& per_sample_weights) {
+
+  AT_ASSERT(mode == MODE_SUM);
+  AT_ASSERT((grad.scalar_type() == kFloat)&& (grad.stride(1) == 1) && !per_sample_weights.defined());
+
+  int64_t indices_size0 = indices.size(0);
+  int64_t ddim = grad.size(1);
+  Tensor index_grad = at::empty({indices_size0, ddim}, grad.options());
+  float* gradout_data = index_grad.data_ptr<float>();
+
+  auto offsets_accessor = offsets.accessor<int64_t, 1>();
+  auto offset_numel = offsets.numel();
+
+  float* grad_data = grad.data_ptr<float>();
+  int grad_stride0 = grad.stride(0);
+  at::parallel_for(0, offset_numel, 0, [&](int64_t start, int64_t end) {
+    for(auto mb = start; mb < end; mb++) {
+      int64_t select_off_start = offsets_accessor[mb];
+      int64_t select_off_end = (mb < (offset_numel - 1) ? offsets_accessor[mb + 1] : indices_size0);
+      auto grad_block = grad_data + grad_stride0 * mb;;
+      for (int64_t s = select_off_start; s < select_off_end; s++) {
+        THBlas_copy<float>(ddim, grad_block, 1, gradout_data + ddim * s, 1);
+      }
+    }
+  });
+
+  int64_t num_features = index_grad.size(-1);
+  auto weight_size = std::array<int64_t, 2>{{ num_weights, num_features }};
+  auto dense_options = index_grad.options();
+
+  if (index_grad.numel() == 0) {
+    return at::_sparse_coo_tensor_unsafe(at::empty({1, 0}, indices.options()),
+                                         at::empty({0, num_features}, dense_options),
+                                         weight_size);
+  }
+
+  auto index = indices.reshape({1, -1});
+  auto values = index_grad.reshape({-1, num_features});
+
+  return at::_sparse_coo_tensor_unsafe(index, values, weight_size);
+
+}
+
+Tensor _embedding_bag_dense_backward_cpu_sum_fast(
+    const Tensor &grad, const Tensor &indices, const Tensor &offsets, int64_t num_weights, int64_t mode, const Tensor& per_sample_weights) {
+
+  AT_ASSERT(mode == MODE_SUM);
+  AT_ASSERT((grad.scalar_type() == kFloat)&& (grad.stride(1) == 1) && !per_sample_weights.defined());
+
+  int64_t indices_numel = indices.numel();
+  auto offset_numel = offsets.numel();
+
+  Tensor offset2bag;
+  if (indices_numel != offset_numel) {
+    offset2bag = at::zeros(
+      {indices.sizes()[0] + 1}, indices.options()); // offset2bag = [0 0 0 0 0]
+    make_offset2bag(offsets, indices, offset2bag);
+    offset2bag.resize_({indices.sizes()[0]});
+  } else {
+    offset2bag = offsets;
+  }
+
+  int64_t ddim = grad.size(1);
+  Tensor index_grad_weight = at::zeros({num_weights, ddim}, grad.options());
+
+  int64_t grad_length = index_grad_weight.size(0);
+  int max_threads = at::get_num_threads();
+  max_threads = (grad_length < max_threads) ? grad_length : max_threads;
+  int64_t avg_chunk_down = grad_length / max_threads;
+  int64_t chuck_size[max_threads];
+  for (auto i = 0; i < max_threads; i++) {
+    chuck_size[i] = avg_chunk_down;
+  }
+  //make chunk balance among threads as 211
+  for (auto i = 0 ; i < grad_length % max_threads ; i++) {
+    chuck_size[i] += 1;
+  }
+  int64_t chuck_sum_size[max_threads + 1];
+  chuck_sum_size[0] = 0;
+  for (auto i = 1; i < max_threads; i++) {
+    chuck_sum_size[i] = chuck_sum_size[i - 1] + chuck_size[i - 1];
+  }
+  chuck_sum_size[max_threads] = grad_length;
+
+  auto* indices_data = indices.data_ptr<int64_t>();
+  auto* offset2bag_data = offset2bag.data_ptr<int64_t>();
+  auto* grad_data = grad.data_ptr<float>();
+  auto* gradout_data = index_grad_weight.data_ptr<float>();
+  int64_t grad_stride0 = grad.stride(0);
+  at::parallel_for(0, max_threads, 0, [&](int64_t start, int64_t end) {
+    for(auto k = start; k < end; k++) {
+      int64_t chunk_start = chuck_sum_size[k];
+      int64_t chunk_end = chuck_sum_size[k + 1];
+      for (int64_t mb = 0; mb < indices_numel; mb++) {
+        int64_t index = indices_data[mb];
+        if (index >= chunk_start && index < chunk_end) {
+          auto s = offset2bag_data[mb];
+          THBlas_axpy<float>(ddim, 1.0, grad_data + grad_stride0 * s, 1, gradout_data + ddim * index, 1);
+        }
+      }
+    }
+  });
+
+  return index_grad_weight;
+}
+
+// To save compute, if we are going to go down the fast path case for the 'sum'
+// mode, we skip calculating offset2bag, since it is not going to be used.
+static inline bool _embedding_bag_fast_path_sum(const Tensor& grad,
+      const Tensor &indices,
+      const Tensor &offset2bag,
+      const Tensor& per_sample_weights,
+       bool scale_grad_by_freq,
+      int64_t mode) {
+
+  if (at::get_num_threads() == 1) return false;
+  if (offset2bag.numel() != 0 || indices.numel() == 0) return false;
+  if (mode != MODE_SUM || grad.scalar_type() != kFloat) return false;
+  if (per_sample_weights.defined() || scale_grad_by_freq) return false;
+  return true;
+}
+
 // Assumes all input tensors are contiguous.
 // See NOTE [ embedding_bag Native Functions ] in native_functions.yaml for details
-Tensor _embedding_bag_backward(const Tensor &grad, const Tensor &indices,
+Tensor _embedding_bag_backward_cpu(const Tensor &grad, const Tensor &indices,
                               const Tensor &offsets,
                               const Tensor &offset2bag,
                               const Tensor &bag_size_,
@@ -476,6 +591,14 @@ Tensor _embedding_bag_backward(const Tensor &grad, const Tensor &indices,
   auto offsets_arg = TensorArg(offsets, "offsets", 1);
   checkScalarType("embedding_bag", offsets_arg, kLong);
   checkContiguous("embedding_bag", offsets_arg);
+
+  if (_embedding_bag_fast_path_sum(grad, indices, offset2bag, per_sample_weights, scale_grad_by_freq, mode)) {
+    if (sparse) {
+      return _embedding_bag_sparse_backward_cpu_sum_fast(grad.contiguous(), indices, offsets, num_weights, mode, per_sample_weights);
+    } else {
+      return _embedding_bag_dense_backward_cpu_sum_fast(grad.contiguous(), indices, offsets, num_weights, mode, per_sample_weights);
+    }
+  }
 
   Tensor offset2bag_;
   if (indices.numel() != 0 && offset2bag.numel() == 0) {
